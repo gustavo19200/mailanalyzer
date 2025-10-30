@@ -3,7 +3,7 @@
    <name>Mail Analyzer</name>
    <key>mailanalyzer</key>
    <state>stable</state>
-    <logo>https://raw.githubusercontent.com/tomolimo/mailanalyzer/master/plugin.png</logo>
+    <logo>https://raw.githubusercontent.com/gustavo19200/mailanalyzer/master/plugin.png</logo>
    <description>
       <short>
 	 <cs><![CDATA[Zásuvný modul Analyzátor e-mailů může být použit pro automatické zkombinování e-mailů ve skryté kopii do jednoho požadavku]]></cs>
@@ -16,14 +16,19 @@
 		 In case of ping pong emails it will add the replies as followups to the Ticket initially created by the first email.]]></en>
       </long>
    </description>
-   <homepage>https://github.com/tomolimo/mailanalyzer</homepage>
-   <download>https://github.com/tomolimo/mailanalyzer/releases</download>
-   <issues>https://github.com/tomolimo/mailanalyzer/issues</issues>
-   <readme>https://github.com/tomolimo/mailanalyzer/wiki</readme>
+   <homepage>https://github.com/gustavo19200/mailanalyzer</homepage>
+   <download>https://github.com/gustavo19200/mailanalyzer/releases</download>
+   <issues>https://github.com/gustavo19200/mailanalyzer/issues</issues>
+   <readme>https://github.com/gustavo19200/mailanalyzer/wiki</readme>
    <authors>
       <author>Olivier Moron</author>
    </authors>
    <versions>
+      <version>
+         <num>3.3.0</num>
+         <compatibility>~11.0</compatibility>
+         <download_url>https://github.com/gustavo19200/mailanalyzer/releases/download/3.3.0/mailanalyzer-3.3.0.zip</download_url>
+      </version>
       <version>
          <num>3.2.2</num>
          <compatibility>~10.0.18</compatibility>
