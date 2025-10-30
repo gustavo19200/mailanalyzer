@@ -30,7 +30,7 @@ define ("PLUGIN_MAILANALYZER_VERSION", "3.3.0");
 // Minimal GLPI version, inclusive
 define('PLUGIN_MAILANALYZER_MIN_GLPI', '11.0');
 // Maximum GLPI version, exclusive
-define('PLUGIN_MAILANALYZER_MAX_GLPI', '11.0.1');
+define('PLUGIN_MAILANALYZER_MAX_GLPI', '11.0.2');
 
 /**
  * Summary of plugin_init_mailanalyzer
