@@ -217,12 +217,17 @@ class PluginMailAnalyzer {
                ]
             );
             if ($row = $res->current()) {
-               // *** NOVA LÓGICA: Verificar se deve bloquear emails da cadeia ***
-               if ($block_chain_emails) {
+               
+               // *** LÓGICA CRÍTICA: Distinguir entre resposta legítima e cadeia externa ***
+               $is_legitimate_reply = self::isLegitimateReplyToGlpi($parm->input, $row['tickets_id'], $mailgateId);
+               
+               // Se o bloqueio está ativo E não é resposta legítima ao GLPI, bloquear
+               if ($block_chain_emails && !$is_legitimate_reply) {
+                  // Este email faz parte da cadeia externa (CC entre usuários)
                   // Bloquear este email - não criar ticket nem followup
-                  // Registrar log para rastreamento
+                  
                   Toolbox::logInFile('mailanalyzer', sprintf(
-                     "Email bloqueado (cadeia existente) - Message-ID: %s, Ticket relacionado: %s\n",
+                     "Email BLOQUEADO (cadeia externa CC) - Message-ID: %s, Ticket: %s\n",
                      $messageId,
                      $row['tickets_id']
                   ));
@@ -234,6 +239,15 @@ class PluginMailAnalyzer {
                   $local_mailgate->deleteMails($uid, MailCollector::REFUSED_FOLDER);
 
                   return;
+               }
+               
+               // Email legítimo (resposta ao GLPI) - continuar normalmente
+               if ($block_chain_emails && $is_legitimate_reply) {
+                  Toolbox::logInFile('mailanalyzer', sprintf(
+                     "Email PERMITIDO (resposta ao GLPI) - Message-ID: %s, Ticket: %s\n",
+                     $messageId,
+                     $row['tickets_id']
+                  ));
                }
 
                // *** LÓGICA ORIGINAL: Adicionar como followup ***
@@ -292,6 +306,108 @@ class PluginMailAnalyzer {
             }
          }
       }
+   }
+
+
+   /**
+    * Verificar se o email é uma resposta legítima às notificações do GLPI
+    * @param array $input Email input com headers
+    * @param int $ticket_id ID do ticket relacionado
+    * @param int $mailgateId ID do coletor de email
+    * @return bool True se for resposta legítima ao GLPI, False se for cadeia externa
+    */
+   private static function isLegitimateReplyToGlpi($input, $ticket_id, $mailgateId) {
+      global $DB;
+      
+      // ===================================================================
+      // MÉTODO 1: Verificar se GLPI já identificou o ticket via regras
+      // ===================================================================
+      // Quando o usuário responde à notificação do GLPI, as regras do GLPI
+      // normalmente identificam o ticket_id e o incluem no input
+      if (isset($input['_ticket_id']) && $input['_ticket_id'] == $ticket_id) {
+         return true;
+      }
+      
+      // ===================================================================
+      // MÉTODO 2: Verificar padrão no subject [GLPI #XXXX]
+      // ===================================================================
+      // GLPI adiciona [GLPI #1234] ou similar no subject das notificações
+      if (isset($input['_head']['subject'])) {
+         $subject = $input['_head']['subject'];
+         // Padrões comuns: [GLPI #1234], [GLPI-#1234], (GLPI #1234), etc.
+         if (preg_match('/[\[\(].*?#\s*(\d+)\s*[\]\)]/', $subject, $matches)) {
+            $ticket_id_from_subject = $matches[1];
+            if ($ticket_id_from_subject == $ticket_id) {
+               return true;
+            }
+         }
+      }
+      
+      // ===================================================================
+      // MÉTODO 3: Verificar In-Reply-To (método mais confiável)
+      // ===================================================================
+      // Quando o usuário responde à notificação do GLPI, o header In-Reply-To
+      // contém o Message-ID da notificação enviada pelo GLPI.
+      // Emails de notificação do GLPI NÃO estão na tabela message_id
+      // (só emails recebidos estão lá).
+      // Portanto, se In-Reply-To NÃO está na tabela = resposta ao GLPI
+      if (isset($input['_head']['in-reply-to'])) {
+         $in_reply_to = html_entity_decode($input['_head']['in-reply-to']);
+         // Limpar o Message-ID (remover < >)
+         $in_reply_to = trim($in_reply_to, '<> ');
+         
+         // Verificar se está na tabela
+         $check_res = $DB->request(
+            'glpi_plugin_mailanalyzer_message_id',
+            [
+               'AND' => [
+                  'message_id' => $in_reply_to,
+                  'mailcollectors_id' => $mailgateId
+               ]
+            ]
+         );
+         
+         // Se In-Reply-To NÃO está na tabela = É resposta à notificação do GLPI
+         if (count($check_res) == 0) {
+            return true;
+         }
+      }
+      
+      // ===================================================================
+      // MÉTODO 4: Verificar References (segunda opção)
+      // ===================================================================
+      // Similar ao In-Reply-To, mas verifica o primeiro Message-ID
+      // da lista de references (o mais recente geralmente é o último)
+      if (isset($input['_head']['references'])) {
+         $references = html_entity_decode($input['_head']['references']);
+         // Extrair todos os Message-IDs
+         if (preg_match_all('/<([^>]+)>/', $references, $matches)) {
+            // Pegar o último (mais recente)
+            $last_ref = end($matches[1]);
+            
+            // Verificar se está na tabela
+            $check_res = $DB->request(
+               'glpi_plugin_mailanalyzer_message_id',
+               [
+                  'AND' => [
+                     'message_id' => $last_ref,
+                     'mailcollectors_id' => $mailgateId
+                  ]
+               ]
+            );
+            
+            // Se o último reference NÃO está na tabela = resposta ao GLPI
+            if (count($check_res) == 0) {
+               return true;
+            }
+         }
+      }
+      
+      // ===================================================================
+      // NENHUM método identificou como resposta legítima
+      // Portanto, é parte da cadeia externa (CC entre usuários)
+      // ===================================================================
+      return false;
    }
 
 
