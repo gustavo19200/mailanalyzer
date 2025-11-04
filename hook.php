@@ -137,9 +137,10 @@ class PluginMailAnalyzer {
          // this ticket have been created via email receiver.
          // Analyzes emails to establish conversation
 
-         // search for 'Thread-Index'?
+         // Get configuration
          $config = Config::getConfigurationValues('plugin:mailanalyzer');
          $use_threadindex = isset($config['use_threadindex']) && $config['use_threadindex'];
+         $block_chain_emails = isset($config['block_chain_emails']) && $config['block_chain_emails'];
 
          if (isset($mailgate)) {
             // mailgate has been open by web page call, then use it
@@ -216,6 +217,26 @@ class PluginMailAnalyzer {
                ]
             );
             if ($row = $res->current()) {
+               // *** NOVA LÓGICA: Verificar se deve bloquear emails da cadeia ***
+               if ($block_chain_emails) {
+                  // Bloquear este email - não criar ticket nem followup
+                  // Registrar log para rastreamento
+                  Toolbox::logInFile('mailanalyzer', sprintf(
+                     "Email bloqueado (cadeia existente) - Message-ID: %s, Ticket relacionado: %s\n",
+                     $messageId,
+                     $row['tickets_id']
+                  ));
+
+                  // Cancelar criação do ticket
+                  $parm->input = false;
+
+                  // Mover email para pasta de recusados
+                  $local_mailgate->deleteMails($uid, MailCollector::REFUSED_FOLDER);
+
+                  return;
+               }
+
+               // *** LÓGICA ORIGINAL: Adicionar como followup ***
                // TicketFollowup creation only if ticket status is not closed
                $locTicket = new Ticket();
                $locTicket->getFromDB((integer)$row['tickets_id']);
@@ -349,4 +370,3 @@ class PluginMailAnalyzer {
       $DB->delete('glpi_plugin_mailanalyzer_message_id', ['tickets_id' => $item->getID()]);
    }
 }
-

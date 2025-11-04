@@ -56,17 +56,33 @@ class PluginMailanalyzerConfig extends CommonDBTM {
       $config = Config::getConfigurationValues('plugin:mailanalyzer');
 
       echo "<form name='form' action=\"".Toolbox::getItemTypeFormURL('Config')."\" method='post' data-track-changes='true'>";
-            echo "<div class='center' id='tabsbody'>";
+      echo "<div class='center' id='tabsbody'>";
       echo "<table class='tab_cadre_fixe'>";
 
       echo "<tr><th colspan='4'>" . __('Mail Analyzer setup', 'mailanalyzer') . "</th></tr>";
 
+      // Opção Use of Thread index
       echo "<tr class='tab_bg_1'>";
-      echo "<td >".__('Use of Thread index', 'mailanalyzer') ."</td><td >";
+      echo "<td>".__('Use of Thread index', 'mailanalyzer')."</td><td>";
       if (!isset($config['use_threadindex'])) {
           $config['use_threadindex'] = 0;
       }
       Dropdown::showYesNo("use_threadindex", $config['use_threadindex']);
+      echo "</td></tr>";
+      
+      // NOVA OPÇÃO: Bloquear emails da cadeia
+      echo "<tr class='tab_bg_1'>";
+      echo "<td>".__('Block chain emails', 'mailanalyzer')."</td><td>";
+      if (!isset($config['block_chain_emails'])) {
+          $config['block_chain_emails'] = 0;
+      }
+      Dropdown::showYesNo("block_chain_emails", $config['block_chain_emails']);
+      echo "</td></tr>";
+
+      // Descrição da funcionalidade
+      echo "<tr class='tab_bg_1'>";
+      echo "<td colspan='2' class='center'>";
+      echo "<i>".__('When enabled, only the first email in a conversation will create a ticket. All subsequent emails in the same chain (replies, CC responses, etc.) will be blocked and moved to the refused folder.', 'mailanalyzer')."</i>";
       echo "</td></tr>";
       
       echo "<tr><td colspan='2'></td></tr>";
