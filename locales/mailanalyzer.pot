@@ -38,5 +38,13 @@ msgid "When enabled, only the first email in a conversation will create a ticket
 msgstr ""
 
 #: inc/config.class.php
+msgid "Notification template for refused emails"
+msgstr ""
+
+#: inc/config.class.php
+msgid "Select a notification template to send when an email is refused. Leave empty to not send notifications."
+msgstr ""
+
+#: inc/config.class.php
 msgid "Mail Analyzer"
 msgstr ""

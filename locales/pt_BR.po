@@ -37,5 +37,13 @@ msgid "When enabled, only the first email in a conversation will create a ticket
 msgstr "Quando ativado, apenas o primeiro email de uma conversa criará um chamado. Todos os emails subsequentes da mesma cadeia (respostas, respostas com CC, etc.) serão bloqueados e movidos para a pasta de recusados."
 
 #: inc/config.class.php
+msgid "Notification template for refused emails"
+msgstr "Modelo de notificação para emails recusados"
+
+#: inc/config.class.php
+msgid "Select a notification template to send when an email is refused. Leave empty to not send notifications."
+msgstr "Selecione um modelo de notificação para enviar quando um email for recusado. Deixe vazio para não enviar notificações."
+
+#: inc/config.class.php
 msgid "Mail Analyzer"
 msgstr "Mail Analyzer"

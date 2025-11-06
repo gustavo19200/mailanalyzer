@@ -232,6 +232,9 @@ class PluginMailAnalyzer {
                      $row['tickets_id']
                   ));
 
+                  // Enviar notificação se configurado
+                  self::sendRefusedEmailNotification($parm->input, $row['tickets_id'], $config);
+
                   // Cancelar criação do ticket
                   $parm->input = false;
 
@@ -310,7 +313,99 @@ class PluginMailAnalyzer {
 
 
    /**
+    * Enviar notificação quando um email é recusado
+    * @param array $input Email input
+    * @param int $ticket_id ID do ticket relacionado
+    * @param array $config Configuração do plugin
+    * @return void
+    */
+   private static function sendRefusedEmailNotification($input, $ticket_id, $config) {
+      // Verificar se há template configurado
+      if (!isset($config['refused_notification_template']) || $config['refused_notification_template'] == 0) {
+         return; // Sem template configurado, não enviar notificação
+      }
+
+      try {
+         // Carregar o ticket relacionado
+         $ticket = new Ticket();
+         if (!$ticket->getFromDB($ticket_id)) {
+            Toolbox::logInFile('mailanalyzer', "Erro: Ticket #{$ticket_id} não encontrado para enviar notificação de recusa\n");
+            return;
+         }
+
+         // Preparar dados para a notificação
+         $notification_data = [
+            'tickets_id' => $ticket_id,
+            'ticket' => $ticket,
+            'refused_email_from' => $input['_head']['from'] ?? 'Desconhecido',
+            'refused_email_subject' => $input['_head']['subject'] ?? 'Sem assunto',
+            'refused_email_date' => $input['_head']['date'] ?? date('Y-m-d H:i:s'),
+            'refused_reason' => 'Email faz parte de cadeia CC entre usuários',
+            '_disablenotif' => false
+         ];
+
+         // Buscar email do requisitante
+         $requester_email = '';
+         if (isset($input['_users_id_requester'])) {
+            $user = new User();
+            if ($user->getFromDB($input['_users_id_requester'])) {
+               $requester_email = $user->getDefaultEmail();
+            }
+         }
+
+         // Se não conseguiu pegar do usuário, tentar do header
+         if (empty($requester_email) && isset($input['_head']['from'])) {
+            if (preg_match('/<(.+?)>/', $input['_head']['from'], $matches)) {
+               $requester_email = $matches[1];
+            } else {
+               $requester_email = $input['_head']['from'];
+            }
+         }
+
+         if (!empty($requester_email)) {
+            // Enviar notificação usando o template configurado
+            NotificationEvent::raiseEvent(
+               'plugin_mailanalyzer_refused',
+               $ticket,
+               [
+                  'entities_id' => $ticket->fields['entities_id'],
+                  'to_email' => $requester_email,
+                  'template_id' => $config['refused_notification_template'],
+                  'notification_data' => $notification_data
+               ]
+            );
+
+            Toolbox::logInFile('mailanalyzer', sprintf(
+               "Notificação de recusa enviada para: %s (Ticket: #%s, Template: %s)\n",
+               $requester_email,
+               $ticket_id,
+               $config['refused_notification_template']
+            ));
+         } else {
+            Toolbox::logInFile('mailanalyzer', sprintf(
+               "Não foi possível enviar notificação de recusa: email do remetente não encontrado (Ticket: #%s)\n",
+               $ticket_id
+            ));
+         }
+
+      } catch (Exception $e) {
+         Toolbox::logInFile('mailanalyzer', sprintf(
+            "Erro ao enviar notificação de recusa: %s (Ticket: #%s)\n",
+            $e->getMessage(),
+            $ticket_id
+         ));
+      }
+   }
+
+
+   /**
     * Verificar se o email é uma resposta legítima às notificações do GLPI
+    * 
+    * Cenários:
+    * 1. Resposta direta à notificação do GLPI: PERMITIR (criar followup)
+    * 2. Resposta entre usuários (cadeia CC): BLOQUEAR
+    * 3. Primeiro email da thread: PERMITIR (criar ticket)
+    * 
     * @param array $input Email input com headers
     * @param int $ticket_id ID do ticket relacionado
     * @param int $mailgateId ID do coletor de email

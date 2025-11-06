@@ -84,6 +84,26 @@ class PluginMailanalyzerConfig extends CommonDBTM {
       echo "<td colspan='2' class='center'>";
       echo "<i>".__('When enabled, only the first email in a conversation will create a ticket. All subsequent emails in the same chain (replies, CC responses, etc.) will be blocked and moved to the refused folder.', 'mailanalyzer')."</i>";
       echo "</td></tr>";
+
+      // NOVA OPÇÃO: Template de notificação para emails recusados
+      echo "<tr class='tab_bg_1'>";
+      echo "<td>".__('Notification template for refused emails', 'mailanalyzer')."</td><td>";
+      if (!isset($config['refused_notification_template'])) {
+          $config['refused_notification_template'] = 0;
+      }
+      NotificationTemplate::dropdown([
+          'name' => 'refused_notification_template',
+          'value' => $config['refused_notification_template'],
+          'entity' => $_SESSION['glpiactive_entity'],
+          'condition' => ['itemtype' => 'Ticket']
+      ]);
+      echo "</td></tr>";
+
+      // Descrição da notificação
+      echo "<tr class='tab_bg_1'>";
+      echo "<td colspan='2' class='center'>";
+      echo "<i>".__('Select a notification template to send when an email is refused. Leave empty to not send notifications.', 'mailanalyzer')."</i>";
+      echo "</td></tr>";
       
       echo "<tr><td colspan='2'></td></tr>";
 
