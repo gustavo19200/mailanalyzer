@@ -319,96 +319,136 @@ class PluginMailAnalyzer {
    private static function isLegitimateReplyToGlpi($input, $ticket_id, $mailgateId) {
       global $DB;
       
-      // ===================================================================
-      // MÉTODO 1: Verificar se GLPI já identificou o ticket via regras
-      // ===================================================================
-      // Quando o usuário responde à notificação do GLPI, as regras do GLPI
-      // normalmente identificam o ticket_id e o incluem no input
-      if (isset($input['_ticket_id']) && $input['_ticket_id'] == $ticket_id) {
-         return true;
-      }
+      $messageId = html_entity_decode($input['_head']['message_id']);
       
       // ===================================================================
-      // MÉTODO 2: Verificar padrão no subject [GLPI #XXXX]
+      // MÉTODO 1: Verificar se References contém Message-ID do GLPI
       // ===================================================================
-      // GLPI adiciona [GLPI #1234] ou similar no subject das notificações
-      if (isset($input['_head']['subject'])) {
-         $subject = $input['_head']['subject'];
-         // Padrões comuns: [GLPI #1234], [GLPI-#1234], (GLPI #1234), etc.
-         if (preg_match('/[\[\(].*?#\s*(\d+)\s*[\]\)]/', $subject, $matches)) {
-            $ticket_id_from_subject = $matches[1];
-            if ($ticket_id_from_subject == $ticket_id) {
-               return true;
-            }
-         }
-      }
+      // Se References contém um Message-ID começando com "GLPI_", 
+      // é uma resposta legítima à notificação do GLPI
       
-      // ===================================================================
-      // MÉTODO 3: Verificar In-Reply-To (método mais confiável)
-      // ===================================================================
-      // Quando o usuário responde à notificação do GLPI, o header In-Reply-To
-      // contém o Message-ID da notificação enviada pelo GLPI.
-      // Emails de notificação do GLPI NÃO estão na tabela message_id
-      // (só emails recebidos estão lá).
-      // Portanto, se In-Reply-To NÃO está na tabela = resposta ao GLPI
-      if (isset($input['_head']['in-reply-to'])) {
-         $in_reply_to = html_entity_decode($input['_head']['in-reply-to']);
-         // Limpar o Message-ID (remover < >)
-         $in_reply_to = trim($in_reply_to, '<> ');
-         
-         // Verificar se está na tabela
-         $check_res = $DB->request(
-            'glpi_plugin_mailanalyzer_message_id',
-            [
-               'AND' => [
-                  'message_id' => $in_reply_to,
-                  'mailcollectors_id' => $mailgateId
-               ]
-            ]
-         );
-         
-         // Se In-Reply-To NÃO está na tabela = É resposta à notificação do GLPI
-         if (count($check_res) == 0) {
-            return true;
-         }
-      }
-      
-      // ===================================================================
-      // MÉTODO 4: Verificar References (segunda opção)
-      // ===================================================================
-      // Similar ao In-Reply-To, mas verifica o primeiro Message-ID
-      // da lista de references (o mais recente geralmente é o último)
       if (isset($input['_head']['references'])) {
          $references = html_entity_decode($input['_head']['references']);
-         // Extrair todos os Message-IDs
-         if (preg_match_all('/<([^>]+)>/', $references, $matches)) {
-            // Pegar o último (mais recente)
-            $last_ref = end($matches[1]);
-            
-            // Verificar se está na tabela
-            $check_res = $DB->request(
+         
+         // Procurar por Message-ID do GLPI no formato: <GLPI_...@...>
+         if (preg_match('/<GLPI_[^>]+>/', $references)) {
+               Toolbox::logInFile('mailanalyzer', sprintf(
+                  "✅ PERMITIDO: References contém Message-ID do GLPI (resposta à notificação)\n" .
+                  "   Message-ID: %s\n" .
+                  "   Ticket: %s\n" .
+                  "   References: %s\n",
+                  $messageId,
+                  $ticket_id,
+                  substr($references, 0, 200)
+               ));
+               return true; // PERMITIR - é resposta ao GLPI
+         }
+      }
+      
+      // ===================================================================
+      // MÉTODO 2: Verificar In-Reply-To
+      // ===================================================================
+      // Se In-Reply-To aponta para um Message-ID do GLPI, PERMITIR
+      // Se In-Reply-To ESTÁ na tabela (email recebido de usuário), BLOQUEAR
+      
+      if (isset($input['_head']['in-reply-to'])) {
+         $in_reply_to = trim(html_entity_decode($input['_head']['in-reply-to']), '<> ');
+         
+         // Verificar se é resposta direta a uma notificação do GLPI
+         if (preg_match('/^GLPI_/', $in_reply_to)) {
+               Toolbox::logInFile('mailanalyzer', sprintf(
+                  "✅ PERMITIDO: In-Reply-To é Message-ID do GLPI (resposta direta à notificação)\n" .
+                  "   Message-ID: %s\n" .
+                  "   Ticket: %s\n" .
+                  "   In-Reply-To: %s\n",
+                  $messageId,
+                  $ticket_id,
+                  $in_reply_to
+               ));
+               return true; // PERMITIR - é resposta ao GLPI
+         }
+         
+         // Verificar se este Message-ID está na tabela (email recebido de usuário)
+         $check_res = $DB->request(
                'glpi_plugin_mailanalyzer_message_id',
                [
                   'AND' => [
-                     'message_id' => $last_ref,
+                     'message_id' => $in_reply_to,
                      'mailcollectors_id' => $mailgateId
                   ]
                ]
-            );
-            
-            // Se o último reference NÃO está na tabela = resposta ao GLPI
-            if (count($check_res) == 0) {
-               return true;
-            }
+         );
+         
+         if (count($check_res) > 0) {
+               // In-Reply-To ESTÁ na tabela = resposta a email RECEBIDO = cadeia CC
+               Toolbox::logInFile('mailanalyzer', sprintf(
+                  "❌ BLOQUEADO: In-Reply-To encontrado na tabela (resposta entre usuários - cadeia CC)\n" .
+                  "   Message-ID: %s\n" .
+                  "   Ticket: %s\n" .
+                  "   In-Reply-To: %s\n",
+                  $messageId,
+                  $ticket_id,
+                  $in_reply_to
+               ));
+               return false; // BLOQUEAR - é resposta entre usuários
+         } else {
+               // In-Reply-To NÃO está na tabela E não é Message-ID do GLPI
+               // Pode ser uma resposta a outro email que foi deletado ou não processado
+               // Por segurança, vamos considerar como legítimo
+               Toolbox::logInFile('mailanalyzer', sprintf(
+                  "✅ PERMITIDO: In-Reply-To não encontrado na tabela (resposta legítima)\n" .
+                  "   Message-ID: %s\n" .
+                  "   Ticket: %s\n" .
+                  "   In-Reply-To: %s\n",
+                  $messageId,
+                  $ticket_id,
+                  $in_reply_to
+               ));
+               return true; // PERMITIR
          }
       }
       
       // ===================================================================
-      // NENHUM método identificou como resposta legítima
-      // Portanto, é parte da cadeia externa (CC entre usuários)
+      // MÉTODO 3 (FALLBACK): Verificar se é o primeiro email da thread
       // ===================================================================
-      return false;
+      // Se não há In-Reply-To nem References com GLPI_, verificar se já 
+      // existe algum email deste ticket na tabela
+      
+      $res = $DB->request(
+         'glpi_plugin_mailanalyzer_message_id',
+         [
+               'AND' => [
+                  'tickets_id' => $ticket_id,
+                  'mailcollectors_id' => $mailgateId
+               ]
+         ]
+      );
+      
+      if (count($res) > 0) {
+         // Ticket já tem emails registrados = não é o primeiro = BLOQUEAR
+         Toolbox::logInFile('mailanalyzer', sprintf(
+               "❌ BLOQUEADO: Ticket já tem emails registrados e não há indicação de resposta ao GLPI\n" .
+               "   Message-ID: %s\n" .
+               "   Ticket: %s\n" .
+               "   Emails existentes: %d\n",
+               $messageId,
+               $ticket_id,
+               count($res)
+         ));
+         return false; // BLOQUEAR
+      }
+      
+      // Se não há registros = é o primeiro email = PERMITIR
+      Toolbox::logInFile('mailanalyzer', sprintf(
+         "✅ PERMITIDO: Primeiro email da thread (GLPI incluído no meio da cadeia)\n" .
+         "   Message-ID: %s\n" .
+         "   Ticket: %s\n",
+         $messageId,
+         $ticket_id
+      ));
+      return true; // PERMITIR - é o primeiro email
    }
+
 
 
     /**
