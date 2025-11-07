@@ -320,9 +320,12 @@ class PluginMailAnalyzer {
     * @return void
     */
    private static function sendRefusedEmailNotification($input, $ticket_id, $config) {
+      global $CFG_GLPI;
+      
       // Verificar se há template configurado
       if (!isset($config['refused_notification_template']) || $config['refused_notification_template'] == 0) {
-         return; // Sem template configurado, não enviar notificação
+         Toolbox::logInFile('mailanalyzer', "Notificação não enviada: template não configurado\n");
+         return;
       }
 
       try {
@@ -333,67 +336,173 @@ class PluginMailAnalyzer {
             return;
          }
 
-         // Preparar dados para a notificação
-         $notification_data = [
-            'tickets_id' => $ticket_id,
-            'ticket' => $ticket,
-            'refused_email_from' => $input['_head']['from'] ?? 'Desconhecido',
-            'refused_email_subject' => $input['_head']['subject'] ?? 'Sem assunto',
-            'refused_email_date' => $input['_head']['date'] ?? date('Y-m-d H:i:s'),
-            'refused_reason' => 'Email faz parte de cadeia CC entre usuários',
-            '_disablenotif' => false
-         ];
-
          // Buscar email do requisitante
          $requester_email = '';
+         $requester_name = '';
+         
+         // Tentar pegar do usuário requisitante do ticket
          if (isset($input['_users_id_requester'])) {
             $user = new User();
             if ($user->getFromDB($input['_users_id_requester'])) {
                $requester_email = $user->getDefaultEmail();
+               $requester_name = $user->getFriendlyName();
             }
          }
 
-         // Se não conseguiu pegar do usuário, tentar do header
+         // Se não conseguiu, tentar do header do email
          if (empty($requester_email) && isset($input['_head']['from'])) {
-            if (preg_match('/<(.+?)>/', $input['_head']['from'], $matches)) {
-               $requester_email = $matches[1];
+            $from_header = $input['_head']['from'];
+            // Extrair email do formato "Nome <email@example.com>"
+            if (preg_match('/<(.+?)>/', $from_header, $matches)) {
+               $requester_email = trim($matches[1]);
+               // Extrair nome
+               $requester_name = trim(preg_replace('/<.+?>/', '', $from_header));
             } else {
-               $requester_email = $input['_head']['from'];
+               $requester_email = trim($from_header);
+               $requester_name = $requester_email;
             }
          }
 
-         if (!empty($requester_email)) {
-            // Enviar notificação usando o template configurado
-            NotificationEvent::raiseEvent(
-               'plugin_mailanalyzer_refused',
-               $ticket,
-               [
-                  'entities_id' => $ticket->fields['entities_id'],
-                  'to_email' => $requester_email,
-                  'template_id' => $config['refused_notification_template'],
-                  'notification_data' => $notification_data
-               ]
-            );
-
+         if (empty($requester_email)) {
             Toolbox::logInFile('mailanalyzer', sprintf(
-               "Notificação de recusa enviada para: %s (Ticket: #%s, Template: %s)\n",
-               $requester_email,
-               $ticket_id,
-               $config['refused_notification_template']
-            ));
-         } else {
-            Toolbox::logInFile('mailanalyzer', sprintf(
-               "Não foi possível enviar notificação de recusa: email do remetente não encontrado (Ticket: #%s)\n",
+               "❌ Notificação não enviada: email do remetente não encontrado (Ticket: #%s)\n",
                $ticket_id
             ));
+            return;
+         }
+
+         // Carregar o template
+         $template = new NotificationTemplate();
+         if (!$template->getFromDB($config['refused_notification_template'])) {
+            Toolbox::logInFile('mailanalyzer', sprintf(
+               "❌ Erro: Template #%s não encontrado\n",
+               $config['refused_notification_template']
+            ));
+            return;
+         }
+
+         // Preparar dados para substituição no template
+         $data = [
+            'ticket' => [
+               'id' => $ticket_id,
+               'title' => $ticket->fields['name'],
+               'content' => $ticket->fields['content'],
+               'url' => $CFG_GLPI['url_base'] . '/front/ticket.form.php?id=' . $ticket_id,
+               'entity' => Dropdown::getDropdownName('glpi_entities', $ticket->fields['entities_id']),
+               'status' => Ticket::getStatus($ticket->fields['status']),
+               'priority' => Ticket::getPriorityName($ticket->fields['priority']),
+               'creationdate' => Html::convDateTime($ticket->fields['date'])
+            ],
+            'refused_email_from' => $input['_head']['from'] ?? 'Desconhecido',
+            'refused_email_subject' => $input['_head']['subject'] ?? 'Sem assunto',
+            'refused_email_date' => $input['_head']['date'] ?? date('Y-m-d H:i:s'),
+            'refused_reason' => 'Email faz parte de cadeia CC entre usuários',
+            'tickets_id' => $ticket_id
+         ];
+
+         // Criar objeto de notificação
+         $mailing = new NotificationMailing();
+         $options = [
+            'entities_id' => $ticket->fields['entities_id'],
+            'notificationtemplates_id' => $config['refused_notification_template'],
+            'items_id' => $ticket_id,
+            'itemtype' => 'Ticket'
+         ];
+
+         // Buscar tradução do template no idioma do usuário
+         $translation = new NotificationTemplateTranslation();
+         $translations = $translation->find([
+            'notificationtemplates_id' => $config['refused_notification_template'],
+            'language' => $_SESSION['glpilanguage'] ?? ''
+         ]);
+
+         // Se não encontrou tradução no idioma do usuário, buscar qualquer tradução
+         if (count($translations) == 0) {
+            $translations = $translation->find([
+               'notificationtemplates_id' => $config['refused_notification_template']
+            ], ['id ASC'], 1);
+         }
+
+         if (count($translations) > 0) {
+            $translation_data = reset($translations);
+            
+            // Processar subject e body substituindo as variáveis
+            $subject = $translation_data['subject'];
+            $body = $translation_data['content_html'] ?: $translation_data['content_text'];
+            
+            // Substituir variáveis ##variable##
+            foreach ($data as $key => $value) {
+               if (is_array($value)) {
+                  foreach ($value as $subkey => $subvalue) {
+                     $subject = str_replace("##${key}.${subkey}##", $subvalue, $subject);
+                     $body = str_replace("##${key}.${subkey}##", $subvalue, $body);
+                  }
+               } else {
+                  $subject = str_replace("##${key}##", $value, $subject);
+                  $body = str_replace("##${key}##", $value, $body);
+               }
+            }
+
+            // Enviar email diretamente usando GLPIMailer
+            $mail = new GLPIMailer();
+            $mail->AddAddress($requester_email, $requester_name);
+            $mail->Subject = $subject;
+            
+            if (!empty($translation_data['content_html'])) {
+               $mail->isHTML(true);
+               $mail->Body = $body;
+            } else {
+               $mail->isHTML(false);
+               $mail->Body = $body;
+            }
+
+            // Enviar
+            if ($mail->send()) {
+               Toolbox::logInFile('mailanalyzer', sprintf(
+                  "✅ Notificação de recusa enviada com sucesso!\n" .
+                  "   Para: %s (%s)\n" .
+                  "   Ticket: #%s\n" .
+                  "   Template: #%s\n" .
+                  "   Assunto: %s\n",
+                  $requester_email,
+                  $requester_name,
+                  $ticket_id,
+                  $config['refused_notification_template'],
+                  $subject
+               ));
+               return true;
+            } else {
+               Toolbox::logInFile('mailanalyzer', sprintf(
+                  "❌ Erro ao enviar email: %s\n" .
+                  "   Para: %s\n" .
+                  "   Ticket: #%s\n",
+                  $mail->ErrorInfo,
+                  $requester_email,
+                  $ticket_id
+               ));
+               return false;
+            }
+         } else {
+            Toolbox::logInFile('mailanalyzer', sprintf(
+               "❌ Erro: Nenhuma tradução encontrada para o template #%s\n",
+               $config['refused_notification_template']
+            ));
+            return false;
          }
 
       } catch (Exception $e) {
          Toolbox::logInFile('mailanalyzer', sprintf(
-            "Erro ao enviar notificação de recusa: %s (Ticket: #%s)\n",
+            "❌ EXCEÇÃO ao enviar notificação de recusa:\n" .
+            "   Erro: %s\n" .
+            "   Arquivo: %s\n" .
+            "   Linha: %s\n" .
+            "   Ticket: #%s\n",
             $e->getMessage(),
+            $e->getFile(),
+            $e->getLine(),
             $ticket_id
          ));
+         return false;
       }
    }
 
